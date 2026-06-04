@@ -7,6 +7,7 @@ import {
   LogOut,
   Building2,
   UserCog,
+  UserCircle,
 } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import { useProfile } from "../hooks/useProfile";
@@ -24,6 +25,7 @@ const venueOwnerLinks = [
   { to: "/venues", icon: Building2, label: "Meus Espaços" },
   { to: "/slots", icon: CalendarDays, label: "Disponibilidade" },
   { to: "/clients", icon: Users, label: "Clientes" },
+  { to: "/profile", icon: UserCircle, label: "Meu Perfil" },
 ];
 
 export default function Sidebar() {

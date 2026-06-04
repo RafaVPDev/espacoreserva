@@ -13,6 +13,12 @@ const PARTY_TYPES = [
   "Outro",
 ];
 
+const SHIFT_LABEL: Record<string, string> = {
+  diurno: "Diurno (6h às 17h)",
+  noturno: "Noturno (18h às 5h)",
+  especifico: "Específico",
+};
+
 function formatDate(dateStr: string) {
   const [year, month, day] = dateStr.split("-");
   return `${day}/${month}/${year}`;
@@ -24,7 +30,10 @@ export default function Confirm() {
 
   const venueId = searchParams.get("venue") ?? "";
   const date = searchParams.get("date") ?? "";
-  const slot = searchParams.get("slot") ?? "";
+  const shift = searchParams.get("shift") ?? "";
+  const start = searchParams.get("start") ?? "";
+  const end = searchParams.get("end") ?? "";
+
   const { venue } = useVenue(venueId);
 
   const [name, setName] = useState("");
@@ -45,7 +54,6 @@ export default function Confirm() {
     setError(null);
 
     try {
-      // 1. Cria o client
       const { data: client, error: clientError } = await supabase
         .from("clients")
         .insert({ name, phone, email: email || null })
@@ -54,35 +62,18 @@ export default function Confirm() {
 
       if (clientError) throw clientError;
 
-      // 2. Busca o slot pelo venue + data + hora
-      const { data: slotData, error: slotError } = await supabase
-        .from("slots")
-        .select("id")
-        .eq("venue_id", venueId)
-        .eq("slot_date", date)
-        .eq("slot_time", `${slot}:00`)
-        .single();
-
-      if (slotError)
-        throw new Error("Horário não encontrado. Tente novamente.");
-
-      // 3. Cria o booking
       const { error: bookingError } = await supabase.from("bookings").insert({
         client_id: client.id,
-        slot_id: slotData.id,
         venue_id: venueId,
         party_type: partyType,
         notes: notes || null,
+        shift,
+        start_time: shift === "especifico" ? start : null,
+        end_time: shift === "especifico" ? end : null,
+        slot_date: date,
       });
 
-      if (bookingError) {
-        if (bookingError.code === "23505") {
-          throw new Error(
-            "Este horário acabou de ser reservado. Escolha outro.",
-          );
-        }
-        throw bookingError;
-      }
+      if (bookingError) throw bookingError;
 
       navigate("/success");
     } catch (err: unknown) {
@@ -99,7 +90,6 @@ export default function Confirm() {
   return (
     <main className="min-h-screen bg-orange-50 px-4 py-10">
       <div className="max-w-lg mx-auto">
-        {/* Voltar */}
         <button
           onClick={() => navigate(-1)}
           className="flex items-center gap-1 text-orange-500 hover:text-orange-600 text-sm font-medium mb-8 transition-colors"
@@ -130,7 +120,13 @@ export default function Confirm() {
             </div>
             <div className="flex items-center gap-2 text-sm text-gray-600">
               <Clock size={15} className="text-orange-500 shrink-0" />
-              <span>{slot}</span>
+              <span>
+                {SHIFT_LABEL[shift]}
+                {shift === "especifico" &&
+                  start &&
+                  end &&
+                  ` · ${start} às ${end}`}
+              </span>
             </div>
           </div>
         </div>
@@ -222,12 +218,10 @@ export default function Confirm() {
           </div>
         </div>
 
-        {/* Erro */}
         {error && (
           <p className="text-red-500 text-sm mb-4 text-center">{error}</p>
         )}
 
-        {/* Botão */}
         <button
           onClick={handleSubmit}
           disabled={loading}

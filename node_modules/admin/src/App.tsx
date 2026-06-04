@@ -8,7 +8,19 @@ import Slots from "./pages/Slots";
 import Clients from "./pages/Clients";
 import Owners from "./pages/Owners";
 import Venues from "./pages/Venues";
+import Profile from "./pages/Profile";
 
+// dentro das routes:
+<Route
+  path="/profile"
+  element={
+    <ProtectedRoute>
+      <Layout>
+        <Profile />
+      </Layout>
+    </ProtectedRoute>
+  }
+/>;
 export default function App() {
   return (
     <Routes>
@@ -70,6 +82,16 @@ export default function App() {
           <ProtectedRoute>
             <Layout>
               <Venues />
+            </Layout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/profile"
+        element={
+          <ProtectedRoute>
+            <Layout>
+              <Profile />
             </Layout>
           </ProtectedRoute>
         }
