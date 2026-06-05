@@ -18,6 +18,7 @@ type Booking = {
   amount_paid: number | null;
   created_at: string;
   venue_id: string;
+  client_id: string;
   venue_name: string;
   venue_address: string | null;
   venue_number: string | null;
@@ -40,12 +41,14 @@ const STATUS_LABEL: Record<string, string> = {
   pending: "Pendente",
   approved: "Aprovado",
   rejected: "Recusado",
+  finalizado: "Finalizado",
 };
 
 const STATUS_CLASS: Record<string, string> = {
   pending: "bg-yellow-50 text-yellow-600",
   approved: "bg-green-50 text-green-600",
   rejected: "bg-red-50 text-red-600",
+  finalizado: "bg-purple-50 text-purple-600",
 };
 
 const SHIFT_LABEL: Record<string, string> = {
@@ -96,7 +99,9 @@ export default function Bookings() {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState("all");
+  const [filter, setFilter] = useState("open");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
   const [selected, setSelected] = useState<Booking | null>(null);
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -275,33 +280,71 @@ export default function Bookings() {
     setTimeout(() => setCopied(false), 3000);
   }
 
-  const filtered =
-    filter === "all" ? bookings : bookings.filter((b) => b.status === filter);
+  const filtered = bookings.filter((b) => {
+    const matchFilter =
+      filter === "all"
+        ? true
+        : filter === "open"
+          ? ["pending", "approved"].includes(b.status)
+          : filter === "closed"
+            ? ["rejected", "finalizado"].includes(b.status)
+            : b.status === filter;
 
+    const matchDate =
+      filter !== "all"
+        ? true
+        : (!dateFrom || (b.slot_date ?? "") >= dateFrom) &&
+          (!dateTo || (b.slot_date ?? "") <= dateTo);
+
+    return matchFilter && matchDate;
+  });
+
+  const isFinalizado = selected?.status === "finalizado";
   const isQuitado =
-    selected &&
-    selected.price != null &&
-    selected.amount_paid != null &&
+    selected?.price != null &&
+    selected?.amount_paid != null &&
     selected.amount_paid >= selected.price;
 
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <h2 className="text-xl font-bold text-gray-900">Agendamentos</h2>
-        <div className="flex flex-wrap gap-2">
-          {["all", "pending", "approved", "rejected"].map((f) => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={`px-3 py-1.5 rounded-xl text-xs font-medium transition-colors ${
-                filter === f
-                  ? "bg-orange-500 text-white"
-                  : "bg-white border border-gray-200 text-gray-500 hover:border-orange-300"
-              }`}
-            >
-              {f === "all" ? "Todos" : STATUS_LABEL[f]}
-            </button>
-          ))}
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            className="border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 focus:outline-none focus:border-orange-400 transition-colors bg-white"
+          >
+            <optgroup label="Em aberto">
+              <option value="open">Em aberto (todos)</option>
+              <option value="pending">Pendente</option>
+              <option value="approved">Aprovado</option>
+            </optgroup>
+            <optgroup label="Fechado">
+              <option value="closed">Fechado (todos)</option>
+              <option value="rejected">Recusado</option>
+              <option value="finalizado">Finalizado</option>
+            </optgroup>
+            <option value="all">Todos</option>
+          </select>
+
+          {filter === "all" && (
+            <>
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                className="border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 focus:outline-none focus:border-orange-400 transition-colors"
+              />
+              <span className="text-gray-400 text-sm">até</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                className="border border-gray-200 rounded-xl px-3 py-2 text-sm text-gray-700 focus:outline-none focus:border-orange-400 transition-colors"
+              />
+            </>
+          )}
         </div>
       </div>
 
@@ -494,10 +537,9 @@ export default function Bookings() {
                   </p>
                 </div>
 
-                {/* Data editável */}
                 <div className="bg-gray-50 rounded-xl p-3">
                   <p className="text-xs text-gray-400 mb-1">Data</p>
-                  {editingDate ? (
+                  {!isFinalizado && editingDate ? (
                     <div className="flex items-center gap-1">
                       <input
                         type="date"
@@ -526,20 +568,21 @@ export default function Bookings() {
                           ? formatDate(selected.slot_date)
                           : "-"}
                       </p>
-                      <button
-                        onClick={() => setEditingDate(true)}
-                        className="text-gray-400 hover:text-orange-500"
-                      >
-                        <Pencil size={11} />
-                      </button>
+                      {!isFinalizado && (
+                        <button
+                          onClick={() => setEditingDate(true)}
+                          className="text-gray-400 hover:text-orange-500"
+                        >
+                          <Pencil size={11} />
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
 
-                {/* Turno editável */}
                 <div className="bg-gray-50 rounded-xl p-3">
                   <p className="text-xs text-gray-400 mb-1">Turno</p>
-                  {editingShift ? (
+                  {!isFinalizado && editingShift ? (
                     <div className="flex flex-col gap-2">
                       <select
                         value={newShift}
@@ -587,17 +630,18 @@ export default function Bookings() {
                       <p className="text-sm font-medium text-gray-900">
                         {selected.shift ? SHIFT_LABEL[selected.shift] : "-"}
                       </p>
-                      <button
-                        onClick={() => setEditingShift(true)}
-                        className="text-gray-400 hover:text-orange-500"
-                      >
-                        <Pencil size={11} />
-                      </button>
+                      {!isFinalizado && (
+                        <button
+                          onClick={() => setEditingShift(true)}
+                          className="text-gray-400 hover:text-orange-500"
+                        >
+                          <Pencil size={11} />
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
 
-                {/* Horário sempre visível */}
                 <div className="bg-gray-50 rounded-xl p-3">
                   <p className="text-xs text-gray-400 mb-0.5">Horário</p>
                   <p className="text-sm font-medium text-gray-900">
@@ -615,6 +659,7 @@ export default function Bookings() {
                     {selected.party_type}
                   </p>
                 </div>
+
                 <div className="bg-gray-50 rounded-xl p-3">
                   <p className="text-xs text-gray-400 mb-0.5">Status</p>
                   <span
@@ -623,6 +668,7 @@ export default function Bookings() {
                     {STATUS_LABEL[selected.status]}
                   </span>
                 </div>
+
                 {selected.notes && (
                   <div className="bg-gray-50 rounded-xl p-3 col-span-2">
                     <p className="text-xs text-gray-400 mb-0.5">
@@ -654,7 +700,7 @@ export default function Bookings() {
                   </div>
                   <div>
                     <p className="text-xs text-gray-400 mb-0.5">Valor pago</p>
-                    {editingPayment ? (
+                    {!isFinalizado && editingPayment ? (
                       <div className="flex items-center gap-1">
                         <input
                           type="text"
@@ -686,19 +732,42 @@ export default function Bookings() {
                             ? formatPrice(selected.amount_paid)
                             : "-"}
                         </p>
-                        <button
-                          onClick={() => setEditingPayment(true)}
-                          className="text-gray-400 hover:text-orange-500"
-                        >
-                          <Pencil size={11} />
-                        </button>
+                        {!isFinalizado && (
+                          <button
+                            onClick={() => setEditingPayment(true)}
+                            className="text-gray-400 hover:text-orange-500"
+                          >
+                            <Pencil size={11} />
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
                 </div>
               </div>
 
-              {/* Anotações */}
+              {/* Botão finalizar */}
+              {selected.status === "approved" && isQuitado && (
+                <div className="flex items-center justify-between bg-purple-50 rounded-xl p-4">
+                  <div>
+                    <p className="text-sm font-semibold text-purple-700">
+                      Pronto para finalizar
+                    </p>
+                    <p className="text-xs text-purple-500 mt-0.5">
+                      Pagamento quitado. Marque como finalizado.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleStatus("finalizado")}
+                    disabled={saving}
+                    className="bg-purple-500 hover:bg-purple-600 disabled:opacity-60 text-white text-sm font-medium px-4 py-2 rounded-xl transition-colors"
+                  >
+                    Finalizar
+                  </button>
+                </div>
+              )}
+
+              {/* Anotações - sempre editável */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Anotações internas
@@ -718,22 +787,24 @@ export default function Bookings() {
             </div>
 
             <div className="px-6 py-4 border-t border-gray-100 sticky bottom-0 bg-white flex flex-col gap-2">
-              <div className="flex gap-2">
-                <button
-                  onClick={() => handleStatus("rejected")}
-                  disabled={saving || selected.status === "rejected"}
-                  className="flex-1 flex items-center justify-center gap-1.5 border border-red-200 text-red-500 hover:bg-red-50 disabled:opacity-40 font-medium py-2.5 rounded-xl transition-colors text-sm"
-                >
-                  <X size={14} /> Recusar
-                </button>
-                <button
-                  onClick={() => handleStatus("approved")}
-                  disabled={saving || selected.status === "approved"}
-                  className="flex-1 flex items-center justify-center gap-1.5 bg-green-500 hover:bg-green-600 disabled:opacity-40 text-white font-medium py-2.5 rounded-xl transition-colors text-sm"
-                >
-                  <Check size={14} /> Aprovar
-                </button>
-              </div>
+              {!isFinalizado && (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleStatus("rejected")}
+                    disabled={saving || selected.status === "rejected"}
+                    className="flex-1 flex items-center justify-center gap-1.5 border border-red-200 text-red-500 hover:bg-red-50 disabled:opacity-40 font-medium py-2.5 rounded-xl transition-colors text-sm"
+                  >
+                    <X size={14} /> Recusar
+                  </button>
+                  <button
+                    onClick={() => handleStatus("approved")}
+                    disabled={saving || selected.status === "approved"}
+                    className="flex-1 flex items-center justify-center gap-1.5 bg-green-500 hover:bg-green-600 disabled:opacity-40 text-white font-medium py-2.5 rounded-xl transition-colors text-sm"
+                  >
+                    <Check size={14} /> Aprovar
+                  </button>
+                </div>
+              )}
               <button
                 onClick={handleCopy}
                 className="w-full flex items-center justify-center gap-2 border-2 border-orange-400 text-orange-500 hover:bg-orange-50 font-medium py-2.5 rounded-xl transition-colors text-sm"
