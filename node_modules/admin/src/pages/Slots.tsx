@@ -80,11 +80,21 @@ export default function Slots() {
 
   useEffect(() => {
     if (!venueId) return;
-    fetchSchedules();
+    async function load() {
+      setLoading(true);
+      const { data } = await supabase
+        .from("venue_schedules")
+        .select("id, day_of_week, shift, start_time, end_time, price, active")
+        .eq("venue_id", venueId)
+        .order("day_of_week")
+        .order("shift");
+      setSchedules(data ?? []);
+      setLoading(false);
+    }
+    load();
   }, [venueId]);
 
   async function fetchSchedules() {
-    setLoading(true);
     const { data } = await supabase
       .from("venue_schedules")
       .select("id, day_of_week, shift, start_time, end_time, price, active")
@@ -92,7 +102,6 @@ export default function Slots() {
       .order("day_of_week")
       .order("shift");
     setSchedules(data ?? []);
-    setLoading(false);
   }
 
   function handleShiftChange(shift: "diurno" | "noturno" | "especifico") {
@@ -106,6 +115,29 @@ export default function Slots() {
       setError("Informe os horários.");
       return;
     }
+
+    // Validação de sobreposição
+    const newStart = parseInt(startTime.replace(":", ""));
+    const newEnd = parseInt(endTime.replace(":", ""));
+    const gap = 100; // 1 hora em formato HHMM
+
+    const daySchedules = schedules.filter((s) => s.day_of_week === selectedDay);
+
+    for (const s of daySchedules) {
+      const existStart = parseInt(s.start_time.slice(0, 5).replace(":", ""));
+      const existEnd = parseInt(s.end_time.slice(0, 5).replace(":", ""));
+
+      const newStartsBeforeExistEnds = newStart < existEnd + gap;
+      const newEndsAfterExistStarts = newEnd > existStart - gap;
+
+      if (newStartsBeforeExistEnds && newEndsAfterExistStarts) {
+        setError(
+          `Conflito com turno existente (${s.start_time.slice(0, 5)} às ${s.end_time.slice(0, 5)}). Respeite 1 hora de intervalo.`,
+        );
+        return;
+      }
+    }
+
     setSaving(true);
     setError(null);
     try {

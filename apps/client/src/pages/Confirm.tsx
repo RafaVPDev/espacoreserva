@@ -1,8 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ChevronLeft, Calendar, Clock, MapPin } from "lucide-react";
 import { supabase } from "../lib/supabase";
-import { useVenue } from "../hooks/useVenue";
 
 const PARTY_TYPES = [
   "Aniversário",
@@ -14,8 +13,8 @@ const PARTY_TYPES = [
 ];
 
 const SHIFT_LABEL: Record<string, string> = {
-  diurno: "Diurno (6h às 17h)",
-  noturno: "Noturno (18h às 5h)",
+  diurno: "Diurno",
+  noturno: "Noturno",
   especifico: "Específico",
 };
 
@@ -23,6 +22,13 @@ function formatDate(dateStr: string) {
   const [year, month, day] = dateStr.split("-");
   return `${day}/${month}/${year}`;
 }
+
+type VenueDetails = {
+  name: string;
+  city: string;
+  capacity: number | null;
+  min_advance_hours: number | null;
+};
 
 export default function Confirm() {
   const navigate = useNavigate();
@@ -34,29 +40,85 @@ export default function Confirm() {
   const start = searchParams.get("start") ?? "";
   const end = searchParams.get("end") ?? "";
 
-  const { venue } = useVenue(venueId);
+  const [venueDetails, setVenueDetails] = useState<VenueDetails | null>(null);
+
+  useEffect(() => {
+    if (!venueId) return;
+    supabase
+      .from("venues")
+      .select("name, city, capacity, min_advance_hours")
+      .eq("id", venueId)
+      .single()
+      .then(({ data }) => setVenueDetails(data));
+  }, [venueId]);
 
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [cpf, setCpf] = useState("");
   const [email, setEmail] = useState("");
   const [partyType, setPartyType] = useState("");
+  const [guestCount, setGuestCount] = useState("");
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function handleSubmit() {
-    if (!name || !phone || !partyType) {
-      setError("Preencha os campos obrigatórios.");
+    if (!name || !phone || !cpf || !partyType || !guestCount) {
+      setError("Preencha todos os campos obrigatórios.");
       return;
+    }
+
+    if (
+      venueDetails?.capacity &&
+      parseInt(guestCount) > venueDetails.capacity
+    ) {
+      setError(
+        `Este espaço comporta no máximo ${venueDetails.capacity} pessoas.`,
+      );
+      return;
+    }
+
+    if (venueDetails?.min_advance_hours) {
+      const shiftStartHour =
+        shift === "diurno"
+          ? 6
+          : shift === "noturno"
+            ? 18
+            : parseInt(start.split(":")[0] || "0");
+      const eventDateTime = new Date(
+        `${date}T${String(shiftStartHour).padStart(2, "0")}:00:00`,
+      );
+      const minAdvanceMs = venueDetails.min_advance_hours * 60 * 60 * 1000;
+      if (eventDateTime.getTime() - new Date().getTime() < minAdvanceMs) {
+        setError(
+          `Este espaço exige reserva com pelo menos ${venueDetails.min_advance_hours}h de antecedência.`,
+        );
+        return;
+      }
     }
 
     setLoading(true);
     setError(null);
 
     try {
+      // Busca o preço do turno
+      const { data: scheduleData } = await supabase
+        .from("venue_schedules")
+        .select("price")
+        .eq("venue_id", venueId)
+        .eq("shift", shift as string)
+        .eq("active", true)
+        .limit(1)
+        .maybeSingle();
+
       const { data: client, error: clientError } = await supabase
         .from("clients")
-        .insert({ name, phone, email: email || null })
+        .insert({
+          name,
+          phone,
+          cpf: cpf.replace(/\D/g, ""),
+          email: email || null,
+        })
         .select("id")
         .single();
 
@@ -71,6 +133,9 @@ export default function Confirm() {
         start_time: shift === "especifico" ? start : null,
         end_time: shift === "especifico" ? end : null,
         slot_date: date,
+        guest_count: parseInt(guestCount),
+        price: scheduleData?.price ?? null,
+        amount_paid: 0,
       });
 
       if (bookingError) throw bookingError;
@@ -111,7 +176,7 @@ export default function Confirm() {
             <div className="flex items-center gap-2 text-sm text-gray-600">
               <MapPin size={15} className="text-orange-500 shrink-0" />
               <span>
-                {venue?.name} - {venue?.city}
+                {venueDetails?.name} - {venueDetails?.city}
               </span>
             </div>
             <div className="flex items-center gap-2 text-sm text-gray-600">
@@ -148,6 +213,26 @@ export default function Confirm() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
+              CPF <span className="text-orange-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={cpf}
+              onChange={(e) => {
+                const digits = e.target.value.replace(/\D/g, "").slice(0, 11);
+                const formatted = digits
+                  .replace(/^(\d{3})(\d)/, "$1.$2")
+                  .replace(/^(\d{3})\.(\d{3})(\d)/, "$1.$2.$3")
+                  .replace(/\.(\d{3})(\d)/, ".$1-$2");
+                setCpf(formatted);
+              }}
+              placeholder="000.000.000-00"
+              className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:border-orange-400 transition-colors"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
               Telefone <span className="text-orange-500">*</span>
             </label>
             <input
@@ -167,16 +252,33 @@ export default function Confirm() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              E-mail{" "}
-              <span className="text-gray-400 text-xs font-normal">
-                (opcional)
-              </span>
+              E-mail <span className="text-orange-500">*</span>
             </label>
             <input
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="seu@email.com"
+              className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:border-orange-400 transition-colors"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Número de pessoas <span className="text-orange-500">*</span>
+              {venueDetails?.capacity && (
+                <span className="text-gray-400 text-xs font-normal ml-1">
+                  (máx. {venueDetails.capacity})
+                </span>
+              )}
+            </label>
+            <input
+              type="number"
+              value={guestCount}
+              onChange={(e) => setGuestCount(e.target.value)}
+              min="1"
+              max={venueDetails?.capacity ?? undefined}
+              placeholder="Quantas pessoas?"
               className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:border-orange-400 transition-colors"
             />
           </div>

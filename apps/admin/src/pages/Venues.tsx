@@ -10,6 +10,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
+import * as LucideIcons from "lucide-react";
 
 type Venue = {
   id: string;
@@ -23,13 +24,24 @@ type Venue = {
   cep: string | null;
   photos: string[] | null;
   active: boolean;
+  capacity: number | null;
+  min_gap_hours: number | null;
+  min_advance_hours: number | null;
 };
 
+type Amenity = { id: string; name: string; icon: string };
 type ModalType = "create" | "edit" | null;
+
+function DynamicIcon({ name, size = 16 }: { name: string; size?: number }) {
+  const Icon = (LucideIcons as Record<string, LucideIcons.LucideIcon>)[name];
+  if (!Icon) return null;
+  return <Icon size={size} />;
+}
 
 export default function Venues() {
   const { user } = useAuth();
   const [venues, setVenues] = useState<Venue[]>([]);
+  const [amenities, setAmenities] = useState<Amenity[]>([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState<ModalType>(null);
   const [selected, setSelected] = useState<Venue | null>(null);
@@ -46,6 +58,10 @@ export default function Venues() {
   const [city, setCity] = useState("");
   const [state, setState] = useState("");
   const [photos, setPhotos] = useState<string[]>([]);
+  const [capacity, setCapacity] = useState("");
+  const [minGapHours, setMinGapHours] = useState("1");
+  const [minAdvanceHours, setMinAdvanceHours] = useState("24");
+  const [selectedAmenities, setSelectedAmenities] = useState<string[]>([]);
 
   function resetForm() {
     setName("");
@@ -57,6 +73,10 @@ export default function Venues() {
     setCity("");
     setState("");
     setPhotos([]);
+    setCapacity("");
+    setMinGapHours("1");
+    setMinAdvanceHours("24");
+    setSelectedAmenities([]);
     setError(null);
   }
 
@@ -81,14 +101,22 @@ export default function Venues() {
   useEffect(() => {
     if (!user) return;
     async function load() {
-      const { data } = await supabase
-        .from("venues")
-        .select(
-          "id, name, description, cep, address, number, district, city, state, active, photos",
-        )
-        .eq("owner_id", user!.id)
-        .order("name");
-      setVenues(data ?? []);
+      const [venuesRes, amenitiesRes] = await Promise.all([
+        supabase
+          .from("venues")
+          .select(
+            "id, name, description, cep, address, number, district, city, state, active, photos, capacity, min_gap_hours, min_advance_hours",
+          )
+          .eq("owner_id", user!.id)
+          .order("name"),
+        supabase
+          .from("amenities")
+          .select("id, name, icon")
+          .eq("owner_id", user!.id)
+          .order("name"),
+      ]);
+      setVenues(venuesRes.data ?? []);
+      setAmenities(amenitiesRes.data ?? []);
       setLoading(false);
     }
     load();
@@ -98,11 +126,19 @@ export default function Venues() {
     const { data } = await supabase
       .from("venues")
       .select(
-        "id, name, description, cep, address, number, district, city, state, active, photos",
+        "id, name, description, cep, address, number, district, city, state, active, photos, capacity, min_gap_hours, min_advance_hours",
       )
       .eq("owner_id", user!.id)
       .order("name");
     setVenues(data ?? []);
+  }
+
+  async function fetchVenueAmenities(venueId: string) {
+    const { data } = await supabase
+      .from("venue_amenities")
+      .select("amenity_id")
+      .eq("venue_id", venueId);
+    return (data ?? []).map((r) => r.amenity_id as string);
   }
 
   function openCreate() {
@@ -111,7 +147,7 @@ export default function Venues() {
     setModal("create");
   }
 
-  function openEdit(venue: Venue) {
+  async function openEdit(venue: Venue) {
     setName(venue.name);
     setDescription(venue.description ?? "");
     setCep(venue.cep ? venue.cep.replace(/^(\d{5})(\d)/, "$1-$2") : "");
@@ -121,6 +157,11 @@ export default function Venues() {
     setCity(venue.city ?? "");
     setState(venue.state ?? "");
     setPhotos(venue.photos ?? []);
+    setCapacity(venue.capacity?.toString() ?? "");
+    setMinGapHours(venue.min_gap_hours?.toString() ?? "1");
+    setMinAdvanceHours(venue.min_advance_hours?.toString() ?? "24");
+    const amenityIds = await fetchVenueAmenities(venue.id);
+    setSelectedAmenities(amenityIds);
     setError(null);
     setSelected(venue);
     setModal("edit");
@@ -130,6 +171,12 @@ export default function Venues() {
     setModal(null);
     setSelected(null);
     setError(null);
+  }
+
+  function toggleAmenity(id: string) {
+    setSelectedAmenities((prev) =>
+      prev.includes(id) ? prev.filter((a) => a !== id) : [...prev, id],
+    );
   }
 
   function getPayload() {
@@ -143,7 +190,22 @@ export default function Venues() {
       state: state || null,
       cep: cep.replace(/\D/g, "") || null,
       photos: photos.length > 0 ? photos : null,
+      capacity: capacity ? parseInt(capacity) : null,
+      min_gap_hours: parseInt(minGapHours) || 1,
+      min_advance_hours: parseInt(minAdvanceHours) || 24,
     };
+  }
+
+  async function saveAmenities(venueId: string) {
+    await supabase.from("venue_amenities").delete().eq("venue_id", venueId);
+    if (selectedAmenities.length > 0) {
+      await supabase.from("venue_amenities").insert(
+        selectedAmenities.map((id) => ({
+          venue_id: venueId,
+          amenity_id: id,
+        })),
+      );
+    }
   }
 
   async function handleCreate() {
@@ -154,10 +216,13 @@ export default function Venues() {
     setSaving(true);
     setError(null);
     try {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from("venues")
-        .insert({ owner_id: user!.id, ...getPayload() });
+        .insert({ owner_id: user!.id, ...getPayload() })
+        .select("id")
+        .single();
       if (error) throw error;
+      await saveAmenities(data.id);
       closeModal();
       fetchVenues();
     } catch (err: unknown) {
@@ -180,6 +245,7 @@ export default function Venues() {
         .update(getPayload())
         .eq("id", selected!.id);
       if (error) throw error;
+      await saveAmenities(selected!.id);
       closeModal();
       fetchVenues();
     } catch (err: unknown) {
@@ -340,6 +406,69 @@ export default function Venues() {
         />
       </div>
 
+      <div className="grid grid-cols-3 gap-3">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Capacidade
+          </label>
+          <input
+            type="number"
+            value={capacity}
+            onChange={(e) => setCapacity(e.target.value)}
+            placeholder="Pessoas"
+            className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-900 placeholder-gray-300 focus:outline-none focus:border-orange-400 transition-colors"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Intervalo (hrs)
+          </label>
+          <input
+            type="number"
+            value={minGapHours}
+            onChange={(e) => setMinGapHours(e.target.value)}
+            min="1"
+            className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-900 focus:outline-none focus:border-orange-400 transition-colors"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Antecedência (hrs)
+          </label>
+          <input
+            type="number"
+            value={minAdvanceHours}
+            onChange={(e) => setMinAdvanceHours(e.target.value)}
+            min="1"
+            className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm text-gray-900 focus:outline-none focus:border-orange-400 transition-colors"
+          />
+        </div>
+      </div>
+
+      {amenities.length > 0 && (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Comodidades
+          </label>
+          <div className="flex flex-wrap gap-2">
+            {amenities.map((amenity) => (
+              <button
+                key={amenity.id}
+                onClick={() => toggleAmenity(amenity.id)}
+                className={`flex items-center gap-2 px-3 py-2 rounded-xl border-2 text-sm font-medium transition-colors ${
+                  selectedAmenities.includes(amenity.id)
+                    ? "border-orange-400 bg-orange-50 text-orange-600"
+                    : "border-gray-200 text-gray-500 hover:border-orange-300"
+                }`}
+              >
+                <DynamicIcon name={amenity.icon} size={14} />
+                {amenity.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-2">
           Fotos
@@ -404,96 +533,150 @@ export default function Venues() {
               Nenhum espaço cadastrado ainda.
             </div>
           ) : (
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-gray-100">
-                  <th className="text-left px-6 py-3 text-xs text-gray-400 font-medium">
-                    Nome
-                  </th>
-                  <th className="text-left px-6 py-3 text-xs text-gray-400 font-medium">
-                    Endereço
-                  </th>
-                  <th className="text-left px-6 py-3 text-xs text-gray-400 font-medium">
-                    Fotos
-                  </th>
-                  <th className="text-left px-6 py-3 text-xs text-gray-400 font-medium">
-                    Status
-                  </th>
-                  <th className="px-6 py-3" />
-                </tr>
-              </thead>
-              <tbody>
-                {venues.map((venue) => (
-                  <tr
-                    key={venue.id}
-                    className="border-b border-gray-50 last:border-0"
-                  >
-                    <td className="px-6 py-4 text-sm text-gray-900 font-medium">
-                      {venue.name}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-500">
-                      {[
-                        venue.address,
-                        venue.number,
-                        venue.district,
-                        venue.city,
-                        venue.state,
-                      ]
-                        .filter(Boolean)
-                        .join(", ")}
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex gap-1">
-                        {venue.photos?.slice(0, 3).map((url, i) => (
-                          <img
-                            key={i}
-                            src={url}
-                            alt=""
-                            className="w-8 h-8 rounded-lg object-cover"
-                          />
-                        ))}
-                        {(venue.photos?.length ?? 0) === 0 && (
-                          <span className="text-xs text-gray-300">
-                            Sem fotos
+            <>
+              {/* Desktop */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-gray-100">
+                      <th className="text-left px-6 py-3 text-xs text-gray-400 font-medium">
+                        Nome
+                      </th>
+                      <th className="text-left px-6 py-3 text-xs text-gray-400 font-medium">
+                        Endereço
+                      </th>
+                      <th className="text-left px-6 py-3 text-xs text-gray-400 font-medium">
+                        Capacidade
+                      </th>
+                      <th className="text-left px-6 py-3 text-xs text-gray-400 font-medium">
+                        Fotos
+                      </th>
+                      <th className="text-left px-6 py-3 text-xs text-gray-400 font-medium">
+                        Status
+                      </th>
+                      <th className="px-6 py-3" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {venues.map((venue) => (
+                      <tr
+                        key={venue.id}
+                        className="border-b border-gray-50 last:border-0"
+                      >
+                        <td className="px-6 py-4 text-sm text-gray-900 font-medium">
+                          {venue.name}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-500">
+                          {[
+                            venue.address,
+                            venue.number,
+                            venue.district,
+                            venue.city,
+                            venue.state,
+                          ]
+                            .filter(Boolean)
+                            .join(", ")}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-500">
+                          {venue.capacity ? `${venue.capacity} pessoas` : "-"}
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex gap-1">
+                            {venue.photos?.slice(0, 3).map((url, i) => (
+                              <img
+                                key={i}
+                                src={url}
+                                alt=""
+                                className="w-8 h-8 rounded-lg object-cover"
+                              />
+                            ))}
+                            {(venue.photos?.length ?? 0) === 0 && (
+                              <span className="text-xs text-gray-300">
+                                Sem fotos
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span
+                            className={`text-xs font-medium px-2.5 py-1 rounded-lg ${venue.active ? "bg-green-50 text-green-600" : "bg-gray-100 text-gray-400"}`}
+                          >
+                            {venue.active ? "Ativo" : "Inativo"}
                           </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-2 justify-end">
+                            <button
+                              onClick={() => openEdit(venue)}
+                              className="text-gray-400 hover:text-orange-500 transition-colors"
+                            >
+                              <Pencil size={15} />
+                            </button>
+                            <button
+                              onClick={() => handleToggleActive(venue)}
+                              className={`transition-colors ${venue.active ? "text-green-500 hover:text-gray-400" : "text-gray-400 hover:text-green-500"}`}
+                            >
+                              {venue.active ? (
+                                <ToggleRight size={18} />
+                              ) : (
+                                <ToggleLeft size={18} />
+                              )}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile */}
+              <div className="md:hidden divide-y divide-gray-50">
+                {venues.map((venue) => (
+                  <div
+                    key={venue.id}
+                    className="px-4 py-4 flex items-center justify-between gap-3"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-900 truncate">
+                        {venue.name}
+                      </p>
+                      <p className="text-xs text-gray-400 truncate">
+                        {[venue.city, venue.state].filter(Boolean).join(", ")}
+                      </p>
+                      {venue.capacity && (
+                        <p className="text-xs text-gray-400">
+                          {venue.capacity} pessoas
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
                       <span
-                        className={`text-xs font-medium px-2.5 py-1 rounded-lg ${
-                          venue.active
-                            ? "bg-green-50 text-green-600"
-                            : "bg-gray-100 text-gray-400"
-                        }`}
+                        className={`text-xs font-medium px-2 py-0.5 rounded-lg ${venue.active ? "bg-green-50 text-green-600" : "bg-gray-100 text-gray-400"}`}
                       >
                         {venue.active ? "Ativo" : "Inativo"}
                       </span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2 justify-end">
-                        <button
-                          onClick={() => openEdit(venue)}
-                          className="text-gray-400 hover:text-orange-500 transition-colors"
-                        >
-                          <Pencil size={15} />
-                        </button>
-                        <button
-                          onClick={() => handleToggleActive(venue)}
-                          className={`transition-colors ${venue.active ? "text-green-500 hover:text-gray-400" : "text-gray-400 hover:text-green-500"}`}
-                        >
-                          {venue.active ? (
-                            <ToggleRight size={18} />
-                          ) : (
-                            <ToggleLeft size={18} />
-                          )}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
+                      <button
+                        onClick={() => openEdit(venue)}
+                        className="text-gray-400 hover:text-orange-500 transition-colors"
+                      >
+                        <Pencil size={15} />
+                      </button>
+                      <button
+                        onClick={() => handleToggleActive(venue)}
+                        className={`transition-colors ${venue.active ? "text-green-500 hover:text-gray-400" : "text-gray-400 hover:text-green-500"}`}
+                      >
+                        {venue.active ? (
+                          <ToggleRight size={18} />
+                        ) : (
+                          <ToggleLeft size={18} />
+                        )}
+                      </button>
+                    </div>
+                  </div>
                 ))}
-              </tbody>
-            </table>
+              </div>
+            </>
           )}
         </div>
       )}

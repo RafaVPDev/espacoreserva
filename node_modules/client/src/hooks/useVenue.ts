@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 
-type Venue = { name: string; city: string };
+type Venue = {
+  name: string;
+  city: string;
+  min_advance_hours: number | null;
+};
 
 export function useVenue(venueId: string) {
   const [venue, setVenue] = useState<Venue | null>(null);
@@ -12,7 +16,7 @@ export function useVenue(venueId: string) {
     async function fetch() {
       const { data } = await supabase
         .from("venues")
-        .select("name, city")
+        .select("name, city, min_advance_hours")
         .eq("id", venueId)
         .single();
       setVenue(data);

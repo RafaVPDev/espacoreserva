@@ -90,9 +90,32 @@ export default function Booking() {
     return new Date(dateStr + "T12:00:00").getDay();
   }
 
+  function isShiftExpired(dateStr: string, shift: string, startTime: string) {
+    const now = new Date();
+    const shiftStartHour =
+      shift === "diurno"
+        ? 6
+        : shift === "noturno"
+          ? 18
+          : parseInt(startTime.slice(0, 2) || "0");
+
+    const shiftStart = new Date(
+      `${dateStr}T${String(shiftStartHour).padStart(2, "0")}:00:00`,
+    );
+    const advanceMs = (venue?.min_advance_hours ?? 0) * 60 * 60 * 1000;
+    const cutoff = new Date(shiftStart.getTime() - advanceMs);
+
+    return now >= cutoff;
+  }
+
   function getSchedulesForDate(dateStr: string) {
     const dow = getDayOfWeek(dateStr);
-    return schedules.filter((s) => s.day_of_week === dow && s.active);
+    return schedules.filter(
+      (s) =>
+        s.day_of_week === dow &&
+        s.active &&
+        !isShiftExpired(dateStr, s.shift, s.start_time),
+    );
   }
 
   function handleConfirm() {
